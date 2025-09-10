@@ -17,7 +17,13 @@ const replicate = new Replicate({
 
 // Middleware
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'file://', '*'],
+    origin: [
+        'http://localhost:3000', 
+        'http://127.0.0.1:3000', 
+        'https://virtual-tryon-frontend.vercel.app',
+        'https://virtual-tryon-frontend-eaj0ujlq2-fuats-projects-eb0aadc0.vercel.app',
+        '*'
+    ],
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
