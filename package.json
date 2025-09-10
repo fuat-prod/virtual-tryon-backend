@@ -2,9 +2,9 @@
   "name": "virtual-tryon-backend",
   "version": "1.0.0",
   "description": "Virtual Try-On Web Application Backend - AI powered clothing try-on system",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node app.js",
     "dev": "nodemon server.js",
     "test": "echo \"No tests specified\" && exit 0"
   },
