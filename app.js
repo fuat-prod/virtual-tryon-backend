@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 5000;
 // Replicate client
 const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
+    useFileOutput: false
 });
 
 // Middleware
