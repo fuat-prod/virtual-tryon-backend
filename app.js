@@ -145,15 +145,43 @@ const processVirtualTryOnAI = async (userImagePath, clothingImagePath, category)
         console.log('🔍 DEBUG - Is array?', Array.isArray(output));
         console.log('🔍 DEBUG - First element:', Array.isArray(output) ? output[0] : output);
         
-        // Output array formatında gelir
+       // Output handling - ReadableStream support
         let resultUrl;
-        if (Array.isArray(output) && output.length > 0) {
+        if (output && typeof output === 'object' && output.constructor.name === 'ReadableStream') {
+            // ReadableStream'i URL'e çevir
+            const chunks = [];
+            const reader = output.getReader();
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+            }
+            
+            const uint8Array = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+            let offset = 0;
+            for (const chunk of chunks) {
+                uint8Array.set(chunk, offset);
+                offset += chunk.length;
+            }
+            
+            const textDecoder = new TextDecoder();
+            const responseText = textDecoder.decode(uint8Array);
+            
+            try {
+                const jsonResponse = JSON.parse(responseText);
+                resultUrl = Array.isArray(jsonResponse) ? jsonResponse[0] : jsonResponse;
+            } catch {
+                resultUrl = responseText.trim();
+            }
+            console.log('📝 Stream result URL:', resultUrl);
+        } else if (Array.isArray(output) && output.length > 0) {
             resultUrl = output[0];
             console.log('📝 Array result URL:', resultUrl);
         } else {
             resultUrl = output;
             console.log('📝 Direct result:', resultUrl);
-        }
+    }
         
         console.log('🎉 IDM-VTON processing completed!');
         console.log('📥 Final result URL:', resultUrl);
