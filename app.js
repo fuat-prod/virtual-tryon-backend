@@ -106,7 +106,7 @@ const validateCategory = (category) => {
 // AI Virtual Try-On İşlemi - IDM-VTON (with dynamic category)
 const processVirtualTryOnAI = async (userImagePath, clothingImagePath, category) => {
     try {
-        console.log('🎯 IDM-VTON Virtual Try-On starting...');
+        console.log('🎯 IDM-VTON UPDATED Virtual Try-On starting...');
         console.log(`👤 User image: ${userImagePath}`);
         console.log(`👕 Clothing image: ${clothingImagePath}`);
         console.log(`📂 Category: ${category}`);
