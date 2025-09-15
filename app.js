@@ -144,7 +144,8 @@ const processVirtualTryOnAI = async (userImagePath, clothingImagePath, category)
         console.log('🔍 DEBUG - IDM Output value:', output);
         console.log('🔍 DEBUG - Is array?', Array.isArray(output));
         console.log('🔍 DEBUG - First element:', Array.isArray(output) ? output[0] : output);
-        
+        console.log('🔍 DEBUG - Constructor name:', output.constructor.name);
+
        // Output handling - ReadableStream support
         let resultUrl;
         if (output && typeof output === 'object' && output.constructor.name === 'ReadableStream') {
