@@ -5,16 +5,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const Replicate = require('replicate');
+
+// Yeni API Manager sistemi
+const apiManager = require('./services/apiManager');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-// Replicate client
-const replicate = new Replicate({
-    auth: process.env.REPLICATE_API_TOKEN,
-    useFileOutput: false
-});
 
 // Middleware
 app.use(cors({
@@ -22,7 +18,6 @@ app.use(cors({
         'http://localhost:3000', 
         'http://127.0.0.1:3000', 
         'https://virtual-tryon-frontend.vercel.app',
-        'https://virtual-tryon-frontend-eaj0ujlq2-fuats-projects-eb0aadc0.vercel.app',
         '*'
     ],
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -33,13 +28,12 @@ app.use(cors({
 app.use(express.json());
 app.use('/results', express.static(path.join(__dirname, 'public', 'results')));
 
-// CORS middleware - BURAYA EKLEYİN
+// CORS middleware
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     
-    // OPTIONS request'leri için
     if (req.method === 'OPTIONS') {
         res.sendStatus(200);
     } else {
@@ -47,8 +41,7 @@ app.use((req, res, next) => {
     }
 });
 
-
-// Multer konfigürasyonu
+// Multer configuration
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
@@ -77,23 +70,6 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-// Görsel dosyasını base64'e çevirme
-const imageToBase64 = async (imagePath) => {
-    try {
-        console.log('📷 Reading image:', imagePath);
-        const imageBuffer = await fs.readFile(imagePath);
-        console.log('📊 Buffer size:', imageBuffer.length);
-        const base64 = imageBuffer.toString('base64');
-        const mimeType = path.extname(imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
-        const dataUrl = `data:${mimeType};base64,${base64}`;
-        console.log('✅ Base64 conversion successful, size:', dataUrl.length);
-        return dataUrl;
-    } catch (error) {
-        console.error('❌ Base64 conversion error:', error);
-        throw new Error(`Base64 conversion error: ${error.message}`);
-    }
-};
-
 // URL'den görsel indirme
 const downloadImageFromUrl = async (imageUrl, outputPath) => {
     try {
@@ -119,98 +95,6 @@ const validateCategory = (category) => {
     return validCategories.includes(category);
 };
 
-// AI Virtual Try-On İşlemi - IDM-VTON (with dynamic category)
-const processVirtualTryOnAI = async (userImagePath, clothingImagePath, category) => {
-    try {
-        console.log('🎯 IDM-VTON UPDATED Virtual Try-On starting...');
-        console.log(`👤 User image: ${userImagePath}`);
-        console.log(`👕 Clothing image: ${clothingImagePath}`);
-        console.log(`📂 Category: ${category}`);
-        
-        // Category validation
-        if (!validateCategory(category)) {
-            throw new Error(`Invalid category: ${category}. Must be one of: upper_body, lower_body, dresses`);
-        }
-        
-        // Görselleri base64'e çevir
-        const humanImage = await imageToBase64(userImagePath);
-        const garmImage = await imageToBase64(clothingImagePath);
-        
-        console.log('📤 IDM-VTON Replicate API call...');
-        
-        // IDM-VTON modeli ile işle - Dynamic category
-        const output = await replicate.run(
-            "cuuupid/idm-vton:0513734a452173b8173e907e3a59d19a36266e55b48528559432bd21c7d7e985",
-            {
-                input: {
-                    human_img: humanImage,
-                    garm_img: garmImage,
-                    category: category, // Dynamic category from user selection
-                    garment_des: `${category.replace('_', ' ')} clothing item`,
-                    crop: false,
-                    seed: Math.floor(Math.random() * 1000000),
-                    steps: 30,
-                    mask_only: false,
-                    force_dc: false
-                }
-            }
-        );
-        
-        console.log('🔍 DEBUG - IDM Output type:', typeof output);
-        console.log('🔍 DEBUG - IDM Output value:', output);
-        console.log('🔍 DEBUG - Is array?', Array.isArray(output));
-        console.log('🔍 DEBUG - First element:', Array.isArray(output) ? output[0] : output);
-        console.log('🔍 DEBUG - Constructor name:', output.constructor.name);
-
-       // Output handling - ReadableStream support
-        let resultUrl;
-        if (output && typeof output === 'object' && output.constructor.name === 'ReadableStream') {
-            // ReadableStream'i URL'e çevir
-            const chunks = [];
-            const reader = output.getReader();
-            
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-            }
-            
-            const uint8Array = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-            let offset = 0;
-            for (const chunk of chunks) {
-                uint8Array.set(chunk, offset);
-                offset += chunk.length;
-            }
-            
-            const textDecoder = new TextDecoder();
-            const responseText = textDecoder.decode(uint8Array);
-            
-            try {
-                const jsonResponse = JSON.parse(responseText);
-                resultUrl = Array.isArray(jsonResponse) ? jsonResponse[0] : jsonResponse;
-            } catch {
-                resultUrl = responseText.trim();
-            }
-            console.log('📝 Stream result URL:', resultUrl);
-        } else if (Array.isArray(output) && output.length > 0) {
-            resultUrl = output[0];
-            console.log('📝 Array result URL:', resultUrl);
-        } else {
-            resultUrl = output;
-            console.log('📝 Direct result:', resultUrl);
-    }
-        
-        console.log('🎉 IDM-VTON processing completed!');
-        console.log('📥 Final result URL:', resultUrl);
-        
-        return resultUrl;
-        
-    } catch (error) {
-        console.error('💥 IDM-VTON processing error:', error);
-        throw new Error(`IDM-VTON processing failed: ${error.message}`);
-    }
-};
-
 // Klasör oluşturma
 const createDirectories = async () => {
     const dirs = ['uploads', 'public', 'public/results'];
@@ -224,7 +108,9 @@ const createDirectories = async () => {
     }
 };
 
-// Ana API Endpoint - Updated with category support
+// ========================================
+// 🆕 UPDATED API ENDPOINT - Multi-API Support
+// ========================================
 app.post('/api/process-image', upload.fields([
     { name: 'userImage', maxCount: 1 },
     { name: 'clothingImage', maxCount: 1 }
@@ -232,7 +118,7 @@ app.post('/api/process-image', upload.fields([
     console.log('📥 New Virtual Try-On request received');
     
     try {
-        // Dosya kontrolü
+        // File validation
         if (!req.files || !req.files.userImage || !req.files.clothingImage) {
             return res.status(400).json({
                 success: false,
@@ -240,14 +126,17 @@ app.post('/api/process-image', upload.fields([
             });
         }
         
-        // Category kontrolü
-        const category = req.body.category || 'upper_body'; // Default to upper_body if not provided
+        // Category validation
+        const category = req.body.category || 'upper_body';
         if (!validateCategory(category)) {
             return res.status(400).json({
                 success: false,
                 error: `Invalid category: ${category}. Must be one of: upper_body, lower_body, dresses`
             });
         }
+
+        // Manuel API seçimi (opsiyonel)
+        const selectedApi = req.body.api; // Frontend'den gelebilir
         
         const userImageFile = req.files.userImage[0];
         const clothingImageFile = req.files.clothingImage[0];
@@ -256,57 +145,77 @@ app.post('/api/process-image', upload.fields([
         console.log(`   👤 ${userImageFile.filename} (${(userImageFile.size/1024/1024).toFixed(2)} MB)`);
         console.log(`   👕 ${clothingImageFile.filename} (${(clothingImageFile.size/1024/1024).toFixed(2)} MB)`);
         console.log(`   📂 Category: ${category}`);
-        
-        // AI ile işle - category parameter added
-        const aiResult = await processVirtualTryOnAI(
-            userImageFile.path,
-            clothingImageFile.path,
-            category
-        );
+        if (selectedApi) console.log(`   🎯 Requested API: ${selectedApi}`);
 
-        // IDM-VTON array döndürürse ilk elemanı al
-        const aiResultUrl = Array.isArray(aiResult) ? aiResult[0] : aiResult;
-        console.log('🔍 AI Result type:', typeof aiResult);
-        console.log('🔍 AI Result:', aiResult);
+        // 🆕 API Manager ile işle
+        let apiResult;
         
-        // Sonuç görselini lokal olarak kaydet (opsiyonel)
+        if (selectedApi) {
+            // Manuel API seçimi
+            apiResult = await apiManager.processWithSpecificApi(
+                selectedApi,
+                userImageFile.path,
+                clothingImageFile.path,
+                category
+            );
+            apiResult = {
+                success: true,
+                usedApi: selectedApi,
+                result: apiResult
+            };
+        } else {
+            // Otomatik API seçimi
+            apiResult = await apiManager.autoProcess(
+                userImageFile.path,
+                clothingImageFile.path,
+                category
+            );
+        }
+
+        const resultUrl = apiResult.result;
+        
+        console.log(`🎉 Processing completed with ${apiResult.usedApi}!`);
+        console.log(`📥 Result URL: ${resultUrl}`);
+        
+        // Save result locally
         const resultFileName = `ai-result-${category}-${Date.now()}-${uuidv4()}.jpg`;
         const localResultPath = path.join(__dirname, 'public', 'results', resultFileName);
         
         try {
-            await downloadImageFromUrl(aiResultUrl, localResultPath);
-            // Lokal URL oluştur
+            await downloadImageFromUrl(resultUrl, localResultPath);
             const localResultUrl = `${req.protocol}://${req.get('host')}/results/${resultFileName}`;
             
             console.log(`💾 Result saved locally: ${localResultUrl}`);
             
-            // Geçici dosyaları temizle
+            // Clean temporary files
             await fs.unlink(userImageFile.path);
             await fs.unlink(clothingImageFile.path);
             console.log('🗑️ Temporary files cleaned');
             
-            // Başarılı yanıt (lokal URL ile)
+            // Success response
             res.json({
                 success: true,
                 message: `AI Virtual Try-On completed for ${category.replace('_', ' ')}! 🎉`,
-                imageUrl: localResultUrl, // Lokal URL
-                originalUrl: aiResultUrl, // Replicate URL
+                imageUrl: localResultUrl,
+                originalUrl: resultUrl,
                 fileName: resultFileName,
-                model: 'IDM-VTON',
+                usedApi: apiResult.usedApi,
+                fallback: apiResult.fallback || false,
                 category: category,
                 timestamp: new Date().toISOString()
             });
             
         } catch (downloadError) {
-            console.warn('⚠️ Local save error, using Replicate URL:', downloadError.message);
+            console.warn('⚠️ Local save error, using direct URL:', downloadError.message);
             
-            // Lokal kayıt başarısız, direkt Replicate URL'i döndür
+            // Return direct URL on save failure
             res.json({
                 success: true,
                 message: `AI Virtual Try-On completed for ${category.replace('_', ' ')}! 🎉`,
-                imageUrl: aiResultUrl, // Direkt Replicate URL
+                imageUrl: resultUrl,
                 fileName: `external-${category}-${Date.now()}.jpg`,
-                model: 'IDM-VTON',
+                usedApi: apiResult.usedApi,
+                fallback: apiResult.fallback || false,
                 category: category,
                 timestamp: new Date().toISOString()
             });
@@ -315,7 +224,7 @@ app.post('/api/process-image', upload.fields([
     } catch (error) {
         console.error('💥 API Error:', error);
         
-        // Hata durumunda geçici dosyaları temizle
+        // Clean temporary files on error
         if (req.files) {
             const allFiles = [
                 ...(req.files.userImage || []),
@@ -339,43 +248,64 @@ app.post('/api/process-image', upload.fields([
     }
 });
 
-// Test endpoint'leri
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: '✅ Healthy',
-        ai: 'IDM-VTON Ready',
-        categories: ['upper_body', 'lower_body', 'dresses'],
-        timestamp: new Date().toISOString(),
-        replicate: process.env.REPLICATE_API_TOKEN ? '🔑 Connected' : '❌ Token Missing'
-    });
-});
-
-app.get('/test-ai', async (req, res) => {
+// ========================================
+// 🆕 HEALTH CHECK ENDPOINT - Multi-API Support
+// ========================================
+app.get('/api/health', async (req, res) => {
     try {
-        // Basit Replicate bağlantı testi
-        const response = await replicate.models.list();
+        const apiHealth = await apiManager.healthCheck();
+        const activeApis = apiManager.getActiveApis();
+        
         res.json({
-            message: '🤖 Replicate connection successful!',
-            modelCount: response.results?.length || 0
+            status: '✅ Healthy',
+            activeApis: activeApis,
+            apiStatus: apiHealth,
+            categories: ['upper_body', 'lower_body', 'dresses'],
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
         res.status(500).json({
-            error: 'Replicate connection error',
-            details: error.message
+            status: '❌ Unhealthy',
+            error: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
 
+// ========================================
+// 🆕 API INFO ENDPOINT
+// ========================================
+app.get('/api/info', (req, res) => {
+    const activeApis = apiManager.getActiveApis();
+    
+    res.json({
+        message: '🎭 AI Virtual Try-On API',
+        version: '2.0.0',
+        activeApis: activeApis,
+        supportedCategories: ['upper_body', 'lower_body', 'dresses'],
+        features: [
+            'Multi-API Support',
+            'Automatic API Selection',
+            'Fallback Mechanism',
+            'Category-based Optimization'
+        ],
+        endpoints: {
+            health: 'GET /api/health',
+            info: 'GET /api/info',
+            process: 'POST /api/process-image'
+        }
+    });
+});
+
+// Root endpoint
 app.get('/', (req, res) => {
     res.json({
         message: '🎭 AI Virtual Try-On API v2.0',
-        model: 'IDM-VTON (HuggingFace)',
-        platform: 'Replicate',
+        features: 'Multi-API Support with Auto Selection',
         status: 'ready',
-        categories: ['upper_body', 'lower_body', 'dresses'],
         endpoints: {
             health: 'GET /api/health',
-            testAI: 'GET /test-ai',
+            info: 'GET /api/info',
             process: 'POST /api/process-image'
         }
     });
@@ -399,18 +329,15 @@ const startServer = async () => {
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`
 🚀 AI Virtual Try-On Backend Started!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 AI Model: IDM-VTON (HuggingFace)
-🔗 Platform: Replicate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 Multi-API System: ACTIVE
 📍 API: http://localhost:${PORT}/api/process-image
 📍 Health: http://localhost:${PORT}/api/health
-📍 AI Test: http://localhost:${PORT}/test-ai
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔑 Replicate Token: ${process.env.REPLICATE_API_TOKEN ? '✅ Configured' : '❌ Missing'}
-💰 Estimated Cost: ~$0.05 per image
-⏱️ Processing Time: ~30 seconds
+📍 Info: http://localhost:${PORT}/api/info
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🏷️ Categories: Upper Body | Lower Body | Dresses
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚙️ Active APIs: ${apiManager.getActiveApis().join(', ')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             `);
         });
         
