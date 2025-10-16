@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 
 // Yeni API Manager sistemi
 const apiManager = require('./services/apiManager');
+const { supabaseAdmin } = require('./config/supabase');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -346,5 +347,36 @@ const startServer = async () => {
         process.exit(1);
     }
 };
+
+
+// ==========================================
+// DATABASE TEST ENDPOINT
+// ==========================================
+app.get('/api/test-db', async (req, res) => {
+  try {
+    // Supabase bağlantı testi - paywall config'i oku
+    const { data, error } = await supabaseAdmin
+      .from('paywall_configs')
+      .select('version_name, title, is_active')
+      .limit(1)
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: '✅ Supabase bağlantısı başarılı!',
+      database: 'PostgreSQL via Supabase',
+      test_data: data
+    });
+  } catch (error) {
+    console.error('Database test error:', error);
+    res.status(500).json({
+      success: false,
+      message: '❌ Database bağlantı hatası',
+      error: error.message
+    });
+  }
+});
 
 startServer();

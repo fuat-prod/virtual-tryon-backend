@@ -19,6 +19,7 @@
   "author": "Virtual Try-On Team",
   "license": "MIT",
   "dependencies": {
+    "@supabase/supabase-js": "^2.75.0",
     "base64-to-file": "^1.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
