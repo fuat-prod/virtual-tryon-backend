@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 // Yeni API Manager sistemi
 const apiManager = require('./services/apiManager');
 const { supabaseAdmin } = require('./config/supabase');
+const authRoutes = require('./services/auth/authRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -378,5 +379,11 @@ app.get('/api/test-db', async (req, res) => {
     });
   }
 });
+
+
+// AUTH ROUTES
+// ==========================================
+app.use('/api/auth', authRoutes);
+
 
 startServer();
