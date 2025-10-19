@@ -5,6 +5,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const { useFreeTrial, useCredits } = require('./services/auth/generationService');
+
 
 // Yeni API Manager sistemi
 const apiManager = require('./services/apiManager');
@@ -119,8 +121,60 @@ app.post('/api/process-image', upload.fields([
 ]), async (req, res) => {
     console.log('📥 New Virtual Try-On request received');
     
+    const startTime = Date.now();
+    
     try {
-        // File validation
+        // ==========================================
+        // 1. USER AUTHENTICATION CHECK
+        // ==========================================
+        const userId = req.body.userId;
+        
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'User ID is required',
+                code: 'AUTH_REQUIRED'
+            });
+        }
+
+        // User bilgilerini al
+        const { data: user } = await supabaseAdmin
+            .from('users')
+            .select('id, credits, free_trials_used, free_trials_limit, segment')
+            .eq('id', userId)
+            .single();
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found',
+                code: 'USER_NOT_FOUND'
+            });
+        }
+
+        // Credits veya free trial kontrolü
+        const hasFreeTrial = user.free_trials_used < user.free_trials_limit;
+        const hasCredits = user.credits > 0;
+
+        if (!hasFreeTrial && !hasCredits) {
+            return res.status(403).json({
+                success: false,
+                error: 'No free trials or credits remaining',
+                code: 'NO_CREDITS',
+                user: {
+                    credits: user.credits,
+                    free_trials_used: user.free_trials_used,
+                    free_trials_limit: user.free_trials_limit
+                }
+            });
+        }
+
+        console.log(`👤 User: ${userId.slice(0, 8)}... (${user.segment})`);
+        console.log(`💳 Credits: ${user.credits} | Free Trials: ${user.free_trials_used}/${user.free_trials_limit}`);
+
+        // ==========================================
+        // 2. FILE VALIDATION
+        // ==========================================
         if (!req.files || !req.files.userImage || !req.files.clothingImage) {
             return res.status(400).json({
                 success: false,
@@ -128,7 +182,6 @@ app.post('/api/process-image', upload.fields([
             });
         }
         
-        // Category validation
         const category = req.body.category || 'upper_body';
         if (!validateCategory(category)) {
             return res.status(400).json({
@@ -137,9 +190,7 @@ app.post('/api/process-image', upload.fields([
             });
         }
 
-        // Manuel API seçimi (opsiyonel)
-        const selectedApi = req.body.api; // Frontend'den gelebilir
-        
+        const selectedApi = req.body.api;
         const userImageFile = req.files.userImage[0];
         const clothingImageFile = req.files.clothingImage[0];
         
@@ -149,11 +200,12 @@ app.post('/api/process-image', upload.fields([
         console.log(`   📂 Category: ${category}`);
         if (selectedApi) console.log(`   🎯 Requested API: ${selectedApi}`);
 
-        // 🆕 API Manager ile işle
+        // ==========================================
+        // 3. AI PROCESSING
+        // ==========================================
         let apiResult;
         
         if (selectedApi) {
-            // Manuel API seçimi
             apiResult = await apiManager.processWithSpecificApi(
                 selectedApi,
                 userImageFile.path,
@@ -166,7 +218,6 @@ app.post('/api/process-image', upload.fields([
                 result: apiResult
             };
         } else {
-            // Otomatik API seçimi
             apiResult = await apiManager.autoProcess(
                 userImageFile.path,
                 clothingImageFile.path,
@@ -175,11 +226,14 @@ app.post('/api/process-image', upload.fields([
         }
 
         const resultUrl = apiResult.result;
+        const processingTime = Math.floor((Date.now() - startTime) / 1000);
         
         console.log(`🎉 Processing completed with ${apiResult.usedApi}!`);
-        console.log(`📥 Result URL: ${resultUrl}`);
+        console.log(`⏱️ Processing time: ${processingTime}s`);
         
-        // Save result locally
+        // ==========================================
+        // 4. SAVE RESULT LOCALLY
+        // ==========================================
         const resultFileName = `ai-result-${category}-${Date.now()}-${uuidv4()}.jpg`;
         const localResultPath = path.join(__dirname, 'public', 'results', resultFileName);
         
@@ -189,12 +243,41 @@ app.post('/api/process-image', upload.fields([
             
             console.log(`💾 Result saved locally: ${localResultUrl}`);
             
+            // ==========================================
+            // 5. DATABASE: USE FREE TRIAL OR CREDITS
+            // ==========================================
+            let generationResult;
+            const generationData = {
+                category: category,
+                api_used: apiResult.usedApi,
+                person_image_url: userImageFile.filename,
+                garment_image_url: clothingImageFile.filename,
+                result_image_url: localResultUrl,
+                processing_time_seconds: processingTime
+            };
+
+            if (hasFreeTrial) {
+                // Use free trial
+                generationResult = await useFreeTrial(userId, generationData);
+                console.log('🎁 Free trial used');
+            } else {
+                // Use credits
+                generationResult = await useCredits(userId, generationData, 1);
+                console.log(`💳 1 credit used (${generationResult.credits_remaining} remaining)`);
+            }
+
+            if (!generationResult.success) {
+                console.error('Database save error:', generationResult.error);
+            }
+
             // Clean temporary files
             await fs.unlink(userImageFile.path);
             await fs.unlink(clothingImageFile.path);
             console.log('🗑️ Temporary files cleaned');
             
-            // Success response
+            // ==========================================
+            // 6. SUCCESS RESPONSE
+            // ==========================================
             res.json({
                 success: true,
                 message: `AI Virtual Try-On completed for ${category.replace('_', ' ')}! 🎉`,
@@ -204,47 +287,67 @@ app.post('/api/process-image', upload.fields([
                 usedApi: apiResult.usedApi,
                 fallback: apiResult.fallback || false,
                 category: category,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                // User info
+                usedFreeTrial: hasFreeTrial && !hasCredits,
+                creditsRemaining: generationResult.credits_remaining || user.credits,
+                freeTrialsRemaining: user.free_trials_limit - (user.free_trials_used + (hasFreeTrial ? 1 : 0))
             });
             
         } catch (downloadError) {
             console.warn('⚠️ Local save error, using direct URL:', downloadError.message);
             
-            // Return direct URL on save failure
+            // Return direct URL on save failure (still record in database)
+            let generationResult;
+            const generationData = {
+                category: category,
+                api_used: apiResult.usedApi,
+                person_image_url: userImageFile.filename,
+                garment_image_url: clothingImageFile.filename,
+                result_image_url: resultUrl,
+                processing_time_seconds: processingTime
+            };
+
+            if (hasFreeTrial) {
+                generationResult = await useFreeTrial(userId, generationData);
+            } else {
+                generationResult = await useCredits(userId, generationData, 1);
+            }
+
             res.json({
                 success: true,
                 message: `AI Virtual Try-On completed for ${category.replace('_', ' ')}! 🎉`,
                 imageUrl: resultUrl,
-                fileName: `external-${category}-${Date.now()}.jpg`,
+                originalUrl: resultUrl,
                 usedApi: apiResult.usedApi,
                 fallback: apiResult.fallback || false,
                 category: category,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                usedFreeTrial: hasFreeTrial && !hasCredits,
+                creditsRemaining: generationResult.credits_remaining || user.credits,
+                freeTrialsRemaining: user.free_trials_limit - (user.free_trials_used + (hasFreeTrial ? 1 : 0))
             });
         }
         
     } catch (error) {
-        console.error('💥 API Error:', error);
+        console.error('❌ Processing error:', error);
         
-        // Clean temporary files on error
-        if (req.files) {
-            const allFiles = [
-                ...(req.files.userImage || []),
-                ...(req.files.clothingImage || [])
-            ];
-            
-            for (const file of allFiles) {
-                try {
-                    await fs.unlink(file.path);
-                } catch (cleanupError) {
-                    console.warn('⚠️ Temp file cleanup error:', cleanupError.message);
-                }
+        // Clean files on error
+        try {
+            if (req.files?.userImage?.[0]?.path) {
+                await fs.unlink(req.files.userImage[0].path);
             }
+            if (req.files?.clothingImage?.[0]?.path) {
+                await fs.unlink(req.files.clothingImage[0].path);
+            }
+        } catch (cleanError) {
+            console.error('File cleanup error:', cleanError);
         }
         
         res.status(500).json({
             success: false,
-            error: error.message || 'AI processing error occurred',
+            error: 'Processing failed',
+            details: error.message,
             timestamp: new Date().toISOString()
         });
     }
