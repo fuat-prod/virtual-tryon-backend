@@ -19,6 +19,8 @@
   "author": "Virtual Try-On Team",
   "license": "MIT",
   "dependencies": {
+    "@paddle/paddle-node-sdk": "^1.5.0",
+    "@paddle/paddle-node-sdk": "^3.3.0",
     "@supabase/supabase-js": "^2.75.0",
     "base64-to-file": "^1.1.0",
     "cors": "^2.8.5",
