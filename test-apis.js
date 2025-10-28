@@ -1,5 +1,5 @@
 // test-apis.js - API Test Script
-require('dotenv').config();
+// require('dotenv').config();
 const apiManager = require('./services/apiManager');
 
 async function testApis() {

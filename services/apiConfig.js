@@ -1,5 +1,5 @@
 // services/apiConfig.js
-require('dotenv').config();
+//require('dotenv').config(); // Railway uses environment variables
 
 /**
  * Multi-API Configuration
