@@ -1,7 +1,3 @@
-// Only load .env in local development (Railway has RAILWAY_ENVIRONMENT)
-if (!process.env.RAILWAY_ENVIRONMENT && !process.env.NODE_ENV) {
-  require('dotenv').config();
-}
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs').promises;
