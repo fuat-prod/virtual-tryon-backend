@@ -32,6 +32,11 @@ app.use(cors({
     credentials: true
 }));
 
+// 🔔 PADDLE WEBHOOK ROUTE (MUST BE BEFORE express.json()!)
+const paddleWebhookRouter = require('./routes/paddleWebhook');
+app.use('/api/paddle/webhook', paddleWebhookRouter);
+
+// JSON middleware (after webhook route)
 app.use(express.json());
 app.use('/results', express.static(path.join(__dirname, 'public', 'results')));
 
@@ -485,6 +490,7 @@ app.get('/api/test-db', async (req, res) => {
     });
   }
 });
+
 
 
 // AUTH ROUTES
