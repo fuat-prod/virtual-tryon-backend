@@ -28,6 +28,52 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   try {
     console.log('📨 Paddle webhook received');
 
+    
+    // 🔍 FULL DEBUG
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🔍 ENVIRONMENT VARIABLES DEBUG:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // Tüm env variables'ın key'lerini listele
+    const allEnvKeys = Object.keys(process.env);
+    console.log('📊 Total env variables:', allEnvKeys.length);
+    
+    // Paddle ile ilgili tüm env variables
+    const paddleKeys = allEnvKeys.filter(k => k.includes('PADDLE'));
+    console.log('🏓 Paddle-related env keys:', paddleKeys);
+    
+    // Her birini tek tek kontrol et
+    console.log('🔐 PADDLE_API_KEY exists?', !!process.env.PADDLE_API_KEY);
+    console.log('🔐 PADDLE_API_KEY value:', process.env.PADDLE_API_KEY ? 'EXISTS (hidden)' : 'MISSING');
+    
+    console.log('🔑 PADDLE_WEBHOOK_SECRET exists?', !!process.env.PADDLE_WEBHOOK_SECRET);
+    console.log('🔑 PADDLE_WEBHOOK_SECRET value:', process.env.PADDLE_WEBHOOK_SECRET ? 'EXISTS (hidden)' : 'MISSING');
+    console.log('🔑 PADDLE_WEBHOOK_SECRET length:', process.env.PADDLE_WEBHOOK_SECRET?.length || 0);
+    
+    console.log('🌍 PADDLE_ENVIRONMENT:', process.env.PADDLE_ENVIRONMENT || 'MISSING');
+    
+    // Railway specific variables
+    console.log('🚂 RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT || 'MISSING');
+    console.log('🚂 NODE_ENV:', process.env.NODE_ENV || 'MISSING');
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // Şimdi normal webhook kodu
+    const signature = req.headers['paddle-signature'];
+    if (!signature) {
+      console.error('❌ No signature in header');
+      return res.status(401).json({ error: 'No signature' });
+    }
+
+    const rawBody = req.body.toString();
+    const webhookSecret = process.env.PADDLE_WEBHOOK_SECRET;
+    
+    if (!webhookSecret) {
+      console.error('❌ PADDLE_WEBHOOK_SECRET not configured');
+      return res.status(500).json({ error: 'Server misconfigured' });
+    }
+    
+    
     // 1. Signature verification
     const signature = req.headers['paddle-signature'];
     if (!signature) {
