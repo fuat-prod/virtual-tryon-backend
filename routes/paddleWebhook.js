@@ -58,21 +58,6 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
     
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
-    // Şimdi normal webhook kodu
-    const signature = req.headers['paddle-signature'];
-    if (!signature) {
-      console.error('❌ No signature in header');
-      return res.status(401).json({ error: 'No signature' });
-    }
-
-    const rawBody = req.body.toString();
-    const webhookSecret = process.env.PADDLE_WEBHOOK_SECRET;
-    
-    if (!webhookSecret) {
-      console.error('❌ PADDLE_WEBHOOK_SECRET not configured');
-      return res.status(500).json({ error: 'Server misconfigured' });
-    }
-    
     
     // 1. Signature verification
     const signature = req.headers['paddle-signature'];
