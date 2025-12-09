@@ -20,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@paddle/paddle-node-sdk": "^3.3.0",
+    "@polar-sh/sdk": "^0.41.5",
     "@supabase/supabase-js": "^2.75.0",
     "base64-to-file": "^1.1.0",
     "cors": "^2.8.5",

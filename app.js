@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs').promises;
@@ -11,6 +12,10 @@ const { useFreeTrial, useCredits } = require('./services/auth/generationService'
 const apiManager = require('./services/apiManager');
 const { supabaseAdmin } = require('./config/supabase');
 const authRoutes = require('./services/auth/authRoutes');
+
+// ✅ NEW: Payment & Webhook imports
+const paymentRoutes = require('./services/payment/paymentRoutes');
+const webhookHandler = require('./services/payment/webhookHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -31,11 +36,19 @@ app.use(cors({
     credentials: true
 }));
 
-// 🔔 PADDLE WEBHOOK ROUTE (MUST BE BEFORE express.json()!)
+// ========================================
+// 🔔 WEBHOOK ROUTES (MUST BE BEFORE express.json()!)
+// ========================================
+// Paddle webhook (existing)
 const paddleWebhookRouter = require('./routes/paddleWebhook');
 app.use('/api/paddle/webhook', paddleWebhookRouter);
 
-// JSON middleware (after webhook route)
+// ✅ NEW: Polar webhook
+app.use('/api/webhooks', webhookHandler);
+
+// ========================================
+// JSON MIDDLEWARE (after webhook routes)
+// ========================================
 app.use(express.json());
 app.use('/results', express.static(path.join(__dirname, 'public', 'results')));
 
@@ -423,43 +436,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Error handling
-app.use((error, req, res, next) => {
-    console.error('🚨 Middleware Error:', error);
-    res.status(500).json({
-        success: false,
-        error: 'Server error occurred',
-        details: error.message
-    });
-});
-
-// Start server
-const startServer = async () => {
-    try {
-        await createDirectories();
-        
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log(`
-🚀 AI Virtual Try-On Backend Started!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Multi-API System: ACTIVE
-📍 API: http://localhost:${PORT}/api/process-image
-📍 Health: http://localhost:${PORT}/api/health
-📍 Info: http://localhost:${PORT}/api/info
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🏷️ Categories: Upper Body | Lower Body | Dresses
-⚙️ Active APIs: ${apiManager.getActiveApis().join(', ')}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            `);
-        });
-        
-    } catch (error) {
-        console.error('❌ Server startup error:', error);
-        process.exit(1);
-    }
-};
-
-
 // ==========================================
 // DATABASE TEST ENDPOINT
 // ==========================================
@@ -490,11 +466,52 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-
-
-// AUTH ROUTES
-// ==========================================
+// ========================================
+// API ROUTES
+// ========================================
+// Auth routes
 app.use('/api/auth', authRoutes);
 
+// ✅ NEW: Payment routes
+app.use('/api/payment', paymentRoutes);
+
+// Error handling
+app.use((error, req, res, next) => {
+    console.error('🚨 Middleware Error:', error);
+    res.status(500).json({
+        success: false,
+        error: 'Server error occurred',
+        details: error.message
+    });
+});
+
+// Start server
+const startServer = async () => {
+    try {
+        await createDirectories();
+        
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`
+🚀 AI Virtual Try-On Backend Started!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 Multi-API System: ACTIVE
+📍 API: http://localhost:${PORT}/api/process-image
+📍 Health: http://localhost:${PORT}/api/health
+📍 Info: http://localhost:${PORT}/api/info
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏷️ Categories: Upper Body | Lower Body | Dresses
+⚙️ Active APIs: ${apiManager.getActiveApis().join(', ')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Payment System: Polar.sh (${process.env.POLAR_SERVER || 'sandbox'})
+🔔 Webhooks: /api/webhooks/polar
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            `);
+        });
+        
+    } catch (error) {
+        console.error('❌ Server startup error:', error);
+        process.exit(1);
+    }
+};
 
 startServer();

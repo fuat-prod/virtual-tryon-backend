@@ -25,11 +25,17 @@ async function createGeneration(userId, generationData) {
 
     if (error) throw error;
 
-    // User'ın total_generations sayısını artır
+    // ✅ User'ın total_generations sayısını artır (DÜZELTİLDİ)
+    const { data: currentUser } = await supabaseAdmin
+      .from('users')
+      .select('total_generations')
+      .eq('id', userId)
+      .single();
+
     await supabaseAdmin
       .from('users')
       .update({ 
-        total_generations: supabaseAdmin.raw('total_generations + 1'),
+        total_generations: (currentUser?.total_generations || 0) + 1,
         last_generation_at: new Date().toISOString()
       })
       .eq('id', userId);
