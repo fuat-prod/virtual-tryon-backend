@@ -83,6 +83,44 @@ async function loginWithEmail(email, password) {
       .eq('id', authData.user.id)
       .single();
 
+    // ✅ AUTO-FIX: User yoksa oluştur (Auth'da var ama DB'de yok)
+    if (userError && userError.code === 'PGRST116') {
+      console.log('⚠️ User not found in database (Auth exists), auto-creating...');
+      console.log('   User ID:', authData.user.id);
+      console.log('   Email:', email);
+      
+      const { data: newUser, error: insertError } = await supabaseAdmin
+        .from('users')
+        .insert({
+          id: authData.user.id,
+          email: email,
+          is_anonymous: false,
+          auth_provider: 'email',
+          auth_user_id: authData.user.id,
+          free_trials_limit: 1,
+          free_trials_used: 0,
+          credits: 0,
+          signup_source: 'web',
+          last_login_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('❌ Auto-create failed:', insertError);
+        throw insertError;
+      }
+
+      console.log('✅ User auto-created in database');
+
+      return {
+        success: true,
+        user: newUser,
+        session: authData.session
+      };
+    }
+
+    // Diğer hatalar
     if (userError) throw userError;
 
     // 3. Last login güncelle (ADMIN client)
