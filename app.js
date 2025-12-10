@@ -11,16 +11,22 @@ const { useFreeTrial, useCredits } = require('./services/auth/generationService'
 // Yeni API Manager sistemi
 const apiManager = require('./services/apiManager');
 const { supabaseAdmin } = require('./config/supabase');
-const authRoutes = require('./services/auth/authRoutes');
 
-// ✅ NEW: Payment & Webhook imports
+// ========================================
+// 📋 ROUTE IMPORTS
+// ========================================
+const authRoutes = require('./services/auth/authRoutes');
+const userRoutes = require('./routes/userRoutes'); 
 const paymentRoutes = require('./services/payment/paymentRoutes');
 const webhookHandler = require('./services/payment/webhookHandler');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// ========================================
+// 🌐 CORS MIDDLEWARE
+// ========================================
 app.use(cors({
     origin: [
         'http://localhost:3000', 
@@ -39,9 +45,6 @@ app.use(cors({
 // ========================================
 // 🔔 WEBHOOK ROUTES (MUST BE BEFORE express.json()!)
 // ========================================
-// Paddle webhook (existing)
-const paddleWebhookRouter = require('./routes/paddleWebhook');
-app.use('/api/paddle/webhook', paddleWebhookRouter);
 
 // ✅ NEW: Polar webhook
 app.use('/api/webhooks', webhookHandler);
@@ -471,8 +474,7 @@ app.get('/api/test-db', async (req, res) => {
 // ========================================
 // Auth routes
 app.use('/api/auth', authRoutes);
-
-// ✅ NEW: Payment routes
+app.use('/api/user', userRoutes);
 app.use('/api/payment', paymentRoutes);
 
 // Error handling
