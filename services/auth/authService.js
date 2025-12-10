@@ -63,9 +63,6 @@ async function registerWithEmail(email, password, deviceId) {
   }
 }
 
-/**
- * Email/Password ile giriş yap
- */
 async function loginWithEmail(email, password) {
   try {
     // 1. Supabase Auth ile giriş (PUBLIC client)
@@ -76,18 +73,92 @@ async function loginWithEmail(email, password) {
 
     if (authError) throw authError;
 
-    // 2. Users tablosundan user bilgilerini al (ADMIN client)
+    console.log(`✅ Auth login successful: ${authData.user.id}`);
+
+    // 2. Users tablosundan user bilgilerini al (ID ile)
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', authData.user.id)
-      .single();
+      .maybeSingle();
 
-    // ✅ AUTO-FIX: User yoksa oluştur (Auth'da var ama DB'de yok)
-    if (userError && userError.code === 'PGRST116') {
-      console.log('⚠️ User not found in database (Auth exists), auto-creating...');
-      console.log('   User ID:', authData.user.id);
-      console.log('   Email:', email);
+    // User bulundu, normal flow
+    if (user && !userError) {
+      console.log('✅ User found, updating last login...');
+      
+      await supabaseAdmin
+        .from('users')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', user.id);
+
+      return {
+        success: true,
+        user,
+        session: authData.session
+      };
+    }
+
+    // ✅ AUTO-FIX: User yoksa
+    console.log('⚠️ User not found by ID, checking by email...');
+    
+    // Email ile kontrol et
+    const { data: existingUser } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (existingUser) {
+      // Email ile eski user var, temizle ve yeniden oluştur
+      console.log('⚠️ Found old user with same email, migrating...');
+      console.log(`   Old ID: ${existingUser.id} → New ID: ${authData.user.id}`);
+      
+      // Eski user'ın credits'ini kaydet
+      const oldCredits = existingUser.credits || 0;
+      const oldTrialsUsed = existingUser.free_trials_used || 0;
+      
+      // Eski user'ı sil
+      await supabaseAdmin
+        .from('users')
+        .delete()
+        .eq('id', existingUser.id);
+      
+      console.log('   Old user deleted');
+      
+      // Yeni user oluştur (eski credits'le)
+      const { data: newUser, error: insertError } = await supabaseAdmin
+        .from('users')
+        .insert({
+          id: authData.user.id,
+          email: email,
+          is_anonymous: false,
+          auth_provider: 'email',
+          auth_user_id: authData.user.id,
+          free_trials_limit: 1,
+          free_trials_used: oldTrialsUsed, // ← Eski değer
+          credits: oldCredits, // ← Eski değer
+          signup_source: 'web',
+          last_login_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('❌ Insert failed:', insertError);
+        throw insertError;
+      }
+
+      console.log('✅ User migrated successfully');
+
+      return {
+        success: true,
+        user: newUser,
+        session: authData.session
+      };
+      
+    } else {
+      // Email ile de yok, tamamen yeni user
+      console.log('✅ Creating new user...');
       
       const { data: newUser, error: insertError } = await supabaseAdmin
         .from('users')
@@ -107,11 +178,11 @@ async function loginWithEmail(email, password) {
         .single();
 
       if (insertError) {
-        console.error('❌ Auto-create failed:', insertError);
+        console.error('❌ Insert failed:', insertError);
         throw insertError;
       }
 
-      console.log('✅ User auto-created in database');
+      console.log('✅ User created successfully');
 
       return {
         success: true,
@@ -119,21 +190,6 @@ async function loginWithEmail(email, password) {
         session: authData.session
       };
     }
-
-    // Diğer hatalar
-    if (userError) throw userError;
-
-    // 3. Last login güncelle (ADMIN client)
-    await supabaseAdmin
-      .from('users')
-      .update({ last_login_at: new Date().toISOString() })
-      .eq('id', user.id);
-
-    return {
-      success: true,
-      user,
-      session: authData.session
-    };
 
   } catch (error) {
     console.error('Login error:', error);
