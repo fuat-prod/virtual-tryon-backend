@@ -49,21 +49,19 @@ router.post('/create-checkout', async (req, res) => {
       });
     }
 
-    console.log('✅ User found:', user.email);
+    console.log('✅ User found:', user.email || 'anonymous');
+    console.log('   Is Anonymous:', user.is_anonymous);
 
-    // Anonymous user kontrolü
-    if (user.is_anonymous) {
-      console.log('⚠️ Anonymous user attempted purchase');
-      return res.status(403).json({
-        success: false,
-        error: 'Anonymous users cannot purchase. Please register first.',
-        code: 'ANONYMOUS_USER'
-      });
-    }
-
-    // Email kontrolü
-    if (!user.email) {
-      console.error('❌ User has no email');
+    // ✅ DÜZELTME: Anonymous user check kaldırıldı
+    // Anonymous users can make payments
+    // They will provide email in Polar checkout form
+    
+    // ✅ Email optional (anonymous users için null olabilir)
+    const userEmail = user.email || null;
+    
+    if (!userEmail && !user.is_anonymous) {
+      // Registered user'ın email'i olmalı
+      console.error('❌ Registered user has no email');
       return res.status(400).json({
         success: false,
         error: 'User email not found'
@@ -71,16 +69,20 @@ router.post('/create-checkout', async (req, res) => {
     }
 
     // Checkout oluştur
+    console.log('🔄 Creating checkout...');
+    console.log('   User Email:', userEmail || 'Will be collected by Polar');
+    
     const result = await createCheckoutSession(
       userId,
-      user.email,
+      userEmail, // null olabilir (anonymous için)
       productId,
       {
         // Plan details metadata olarak gönder
         planName: planDetails?.name || 'Unknown Plan',
         planPrice: planDetails?.price || '0',
         planCredits: planDetails?.credits || 0,
-        planId: planDetails?.id || 'unknown'
+        planId: planDetails?.id || 'unknown',
+        isAnonymous: user.is_anonymous // ✅ Webhook için ekle
       }
     );
 

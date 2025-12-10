@@ -21,22 +21,19 @@ async function createCheckoutSession(userId, userEmail, productId, metadata = {}
     console.log('💳 CREATING POLAR CHECKOUT SESSION');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('User ID:', userId);
-    console.log('Email:', userEmail);
+    console.log('Email:', userEmail || 'Will be collected by Polar');
     console.log('Product ID:', productId);
     console.log('Metadata:', metadata);
 
-    // ✅ FINAL FIX: products ARRAY kullan!
+    // Checkout payload
     const checkoutPayload = {
-      // ✅ DÜZELTME: products array (plural!)
-      products: [productId],  // ← ARRAY FORMAT!
+      products: [productId],
       
-      // Customer info
-      customer_email: userEmail,
+      // ✅ DÜZELTME: Email optional (anonymous için null)
+      ...(userEmail && { customer_email: userEmail }),
       
-      // Success URL
       success_url: `${process.env.FRONTEND_URL}/payment/success?checkout_id={CHECKOUT_ID}`,
       
-      // Metadata (webhook'da kullanacağız)
       metadata: {
         userId: userId,
         source: 'virtual-tryon',
@@ -44,6 +41,7 @@ async function createCheckoutSession(userId, userEmail, productId, metadata = {}
         planPrice: metadata.planPrice || '0',
         planCredits: metadata.planCredits || 0,
         planId: metadata.planId || 'unknown',
+        isAnonymous: metadata.isAnonymous || false, // ✅ Webhook için
         timestamp: new Date().toISOString()
       }
     };
@@ -67,7 +65,6 @@ async function createCheckoutSession(userId, userEmail, productId, metadata = {}
   } catch (error) {
     console.error('❌ Polar checkout creation error:', error);
     
-    // Detailed error logging
     if (error.cause) {
       console.error('   Error cause:', error.cause);
     }
@@ -81,6 +78,8 @@ async function createCheckoutSession(userId, userEmail, productId, metadata = {}
     };
   }
 }
+
+// ... rest of the file stays the same
 
 /**
  * Product bilgisini getir
