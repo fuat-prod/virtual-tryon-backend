@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto'); // ✅ YENİ: Random password için
 const { validateEvent, WebhookVerificationError } = require('@polar-sh/sdk/webhooks');
-const { supabaseAdmin } = require('../../config/supabase');
+const { supabase, supabaseAdmin } = require('../../config/supabase'); // ✅ YENİ: supabase ekle
 
 /**
  * POST /api/webhooks/polar
@@ -79,7 +80,6 @@ router.post('/polar', express.raw({ type: 'application/json' }), async (req, res
  * Handle order.created event
  * This is where we add credits to user!
  */
-
 async function handleOrderCreated(order) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('💰 ORDER CREATED HANDLER');
@@ -110,10 +110,9 @@ async function handleOrderCreated(order) {
       console.log('   Existing transaction:', existingTransaction.id);
       console.log('   Credits already added:', existingTransaction.credits_added);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      return; // ← EXIT! Duplicate işlem yapma!
+      return;
     }
 
-    // checkError varsa ve "not found" değilse hata ver
     if (checkError && checkError.code !== 'PGRST116') {
       console.error('❌ Error checking transaction:', checkError);
       throw checkError;
@@ -123,7 +122,7 @@ async function handleOrderCreated(order) {
     
   } catch (error) {
     console.error('❌ Idempotency check error:', error);
-    return; // Güvenli tarafta kal, skip et
+    return;
   }
 
   // Get metadata
@@ -146,6 +145,10 @@ async function handleOrderCreated(order) {
     return;
   }
 
+  // ✅ YENİ: Customer email (Polar'dan)
+  const customerEmail = order.customer?.email || order.billing_email || null;
+  console.log('📧 Customer email:', customerEmail || 'N/A');
+
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('💎 ADDING CREDITS TO USER');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -153,10 +156,10 @@ async function handleOrderCreated(order) {
   console.log('Credits to add:', creditsToAdd);
 
   try {
-    // Get current user credits
+    // Get current user
     const { data: currentUser, error: fetchError } = await supabaseAdmin
       .from('users')
-      .select('credits, email')
+      .select('*')
       .eq('id', userId)
       .single();
 
@@ -170,8 +173,71 @@ async function handleOrderCreated(order) {
 
     console.log('Current credits:', currentCredits);
     console.log('New credits:', newCredits);
+    console.log('Is Anonymous:', currentUser.is_anonymous);
+    console.log('Has Email:', currentUser.email ? 'Yes' : 'No');
 
-    // ✅ ÖNCE TRANSACTION OLUŞTUR (idempotency için)
+    // ✅ YENİ: AUTO-MIGRATE ANONYMOUS USER
+    if (currentUser.is_anonymous && customerEmail && !currentUser.email) {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🔄 AUTO-MIGRATING ANONYMOUS USER');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('   Email:', customerEmail);
+      
+      try {
+        // 1. Random password oluştur
+        const randomPassword = crypto.randomBytes(16).toString('hex');
+        
+        // 2. Supabase Auth user oluştur
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: customerEmail,
+          password: randomPassword,
+          options: {
+            data: {
+              auto_created: true,
+              from_payment: true
+            }
+          }
+        });
+
+        if (authError) {
+          console.error('⚠️ Auth user creation failed:', authError.message);
+          // Continue with credits anyway
+        } else if (authData?.user) {
+          console.log('✅ Auth user created:', authData.user.id);
+          
+          // 3. Users tablosunda email ve auth bilgilerini güncelle
+          await supabaseAdmin
+            .from('users')
+            .update({
+              email: customerEmail,
+              is_anonymous: false,
+              auth_provider: 'email',
+              auth_user_id: authData.user.id,
+              last_login_at: new Date().toISOString()
+            })
+            .eq('id', userId);
+
+          console.log('✅ User migrated to authenticated');
+
+          // 4. Password reset email gönder
+          try {
+            await supabase.auth.resetPasswordForEmail(customerEmail, {
+              redirectTo: `${process.env.FRONTEND_URL || 'https://www.dressai.app'}/reset-password`
+            });
+            console.log('✅ Password reset email sent');
+          } catch (emailError) {
+            console.error('⚠️ Password reset email failed:', emailError.message);
+          }
+        }
+      } catch (migrateError) {
+        console.error('⚠️ Auto-migration failed:', migrateError.message);
+        console.log('   Continuing with credits addition...');
+      }
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    }
+
+    // ✅ TRANSACTION OLUŞTUR (idempotency için)
     const { data: newTransaction, error: txError } = await supabaseAdmin
       .from('transactions')
       .insert({
@@ -185,7 +251,8 @@ async function handleOrderCreated(order) {
         metadata: {
           ...metadata,
           orderStatus: order.status,
-          customerEmail: order.customer?.email || currentUser.email,
+          customerEmail: customerEmail || currentUser.email,
+          autoMigrated: currentUser.is_anonymous && customerEmail ? true : false,
           processedAt: new Date().toISOString()
         }
       })
@@ -193,11 +260,9 @@ async function handleOrderCreated(order) {
       .single();
 
     if (txError) {
-      // Duplicate key error ise bu order zaten işlenmiş
       if (txError.code === '23505') {
         console.log('⚠️ DUPLICATE ORDER DETECTED - SKIPPING CREDITS!');
-        console.log('   This order was already processed by another webhook');
-        return; // ← EXIT!
+        return;
       }
       
       console.error('❌ Error creating transaction record:', txError);
@@ -206,7 +271,7 @@ async function handleOrderCreated(order) {
 
     console.log('✅ Transaction record created:', newTransaction.id);
 
-    // ✅ SONRA CREDITS EKLE
+    // ✅ CREDITS EKLE
     const { error: updateError } = await supabaseAdmin
       .from('users')
       .update({ 
@@ -247,7 +312,6 @@ async function handleOrderUpdated(order) {
   console.log('Order ID:', order.id);
   console.log('Status:', order.status);
 
-  // If order status changed to paid, process it
   if (order.status === 'paid') {
     console.log('✅ Order status changed to PAID - processing...');
     await handleOrderCreated(order);
@@ -263,9 +327,6 @@ async function handleCheckoutCreated(checkout) {
   console.log('🛒 CHECKOUT CREATED HANDLER');
   console.log('Checkout ID:', checkout.id);
   console.log('Status:', checkout.status);
-  
-  // Optional: Track checkout creation
-  // Could be used for analytics
 }
 
 /**
@@ -275,9 +336,6 @@ async function handleCheckoutUpdated(checkout) {
   console.log('🛒 CHECKOUT UPDATED HANDLER');
   console.log('Checkout ID:', checkout.id);
   console.log('Status:', checkout.status);
-  
-  // Optional: Track checkout updates
-  // Could be used for abandoned cart tracking
 }
 
 /**
@@ -287,9 +345,6 @@ async function handleSubscriptionCreated(subscription) {
   console.log('📅 SUBSCRIPTION CREATED HANDLER');
   console.log('Subscription ID:', subscription.id);
   console.log('Status:', subscription.status);
-  
-  // TODO: Handle subscription creation
-  // (for monthly/yearly plans)
 }
 
 /**
@@ -299,9 +354,6 @@ async function handleSubscriptionUpdated(subscription) {
   console.log('📅 SUBSCRIPTION UPDATED HANDLER');
   console.log('Subscription ID:', subscription.id);
   console.log('Status:', subscription.status);
-  
-  // TODO: Handle subscription updates
-  // (renewals, cancellations, etc.)
 }
 
 module.exports = router;

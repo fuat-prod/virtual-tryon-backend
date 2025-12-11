@@ -7,7 +7,8 @@ const {
   migrateAnonymousToAuth,
   loginWithGoogle,
   sendPasswordReset,
-  updatePassword
+  updatePassword,
+  saveAccount // ✅ YENİ
 } = require('./authService');
 
 /**
@@ -154,6 +155,45 @@ router.post('/migrate', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Migration failed'
+    });
+  }
+});
+
+/**
+ * ✅ YENİ: POST /api/auth/save-account
+ * Anonymous user'dan soft email capture (soft prompt)
+ */
+router.post('/save-account', async (req, res) => {
+  try {
+    const { email, anonymousUserId } = req.body;
+
+    if (!email || !anonymousUserId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and user ID are required'
+      });
+    }
+
+    console.log('💾 Save account request:', email, anonymousUserId);
+
+    const result = await saveAccount(anonymousUserId, email);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json({
+      success: true,
+      user: result.user,
+      session: result.session,
+      message: 'Account saved successfully'
+    });
+
+  } catch (error) {
+    console.error('Save account error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save account'
     });
   }
 });

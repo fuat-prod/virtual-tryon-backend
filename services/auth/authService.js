@@ -1,3 +1,4 @@
+const crypto = require('crypto'); // ✅ YENİ
 const { supabase, supabaseAdmin } = require('../../config/supabase');
 
 /**
@@ -5,7 +6,6 @@ const { supabase, supabaseAdmin } = require('../../config/supabase');
  */
 async function registerWithEmail(email, password, deviceId) {
   try {
-    // 1. Supabase Auth'da kullanıcı oluştur (PUBLIC client kullan)
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -18,11 +18,10 @@ async function registerWithEmail(email, password, deviceId) {
 
     if (authError) throw authError;
 
-    // 2. Users tablosunda kayıt oluştur (ADMIN client kullan)
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .insert({
-        id: authData.user.id, // Supabase auth ID'yi kullan
+        id: authData.user.id,
         email: email,
         is_anonymous: false,
         auth_provider: 'email',
@@ -38,7 +37,6 @@ async function registerWithEmail(email, password, deviceId) {
 
     if (userError) throw userError;
 
-    // 3. Device mapping oluştur (ADMIN client)
     if (deviceId) {
       await supabaseAdmin
         .from('user_devices')
@@ -63,9 +61,11 @@ async function registerWithEmail(email, password, deviceId) {
   }
 }
 
+/**
+ * Email/Password ile giriş yap
+ */
 async function loginWithEmail(email, password) {
   try {
-    // 1. Supabase Auth ile giriş (PUBLIC client)
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password
@@ -75,14 +75,12 @@ async function loginWithEmail(email, password) {
 
     console.log(`✅ Auth login successful: ${authData.user.id}`);
 
-    // 2. Users tablosundan user bilgilerini al (ID ile)
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', authData.user.id)
       .maybeSingle();
 
-    // User bulundu, normal flow
     if (user && !userError) {
       console.log('✅ User found, updating last login...');
       
@@ -98,10 +96,8 @@ async function loginWithEmail(email, password) {
       };
     }
 
-    // ✅ AUTO-FIX: User yoksa
     console.log('⚠️ User not found by ID, checking by email...');
     
-    // Email ile kontrol et
     const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('*')
@@ -109,15 +105,12 @@ async function loginWithEmail(email, password) {
       .maybeSingle();
 
     if (existingUser) {
-      // Email ile eski user var, temizle ve yeniden oluştur
       console.log('⚠️ Found old user with same email, migrating...');
       console.log(`   Old ID: ${existingUser.id} → New ID: ${authData.user.id}`);
       
-      // Eski user'ın credits'ini kaydet
       const oldCredits = existingUser.credits || 0;
       const oldTrialsUsed = existingUser.free_trials_used || 0;
       
-      // Eski user'ı sil
       await supabaseAdmin
         .from('users')
         .delete()
@@ -125,7 +118,6 @@ async function loginWithEmail(email, password) {
       
       console.log('   Old user deleted');
       
-      // Yeni user oluştur (eski credits'le)
       const { data: newUser, error: insertError } = await supabaseAdmin
         .from('users')
         .insert({
@@ -135,8 +127,8 @@ async function loginWithEmail(email, password) {
           auth_provider: 'email',
           auth_user_id: authData.user.id,
           free_trials_limit: 1,
-          free_trials_used: oldTrialsUsed, // ← Eski değer
-          credits: oldCredits, // ← Eski değer
+          free_trials_used: oldTrialsUsed,
+          credits: oldCredits,
           signup_source: 'web',
           last_login_at: new Date().toISOString()
         })
@@ -157,7 +149,6 @@ async function loginWithEmail(email, password) {
       };
       
     } else {
-      // Email ile de yok, tamamen yeni user
       console.log('✅ Creating new user...');
       
       const { data: newUser, error: insertError } = await supabaseAdmin
@@ -205,7 +196,6 @@ async function loginWithEmail(email, password) {
  */
 async function migrateAnonymousToAuth(anonymousUserId, email, password) {
   try {
-    // 1. Anonymous user'ı getir (ADMIN client)
     const { data: anonymousUser } = await supabaseAdmin
       .from('users')
       .select('*')
@@ -217,7 +207,6 @@ async function migrateAnonymousToAuth(anonymousUserId, email, password) {
       throw new Error('Anonymous user not found');
     }
 
-    // 2. Supabase Auth'da user oluştur (PUBLIC client)
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password
@@ -225,7 +214,6 @@ async function migrateAnonymousToAuth(anonymousUserId, email, password) {
 
     if (authError) throw authError;
 
-    // 3. Anonymous user'ı güncelle (ADMIN client)
     const { data: updatedUser, error: updateError } = await supabaseAdmin
       .from('users')
       .update({
@@ -240,8 +228,6 @@ async function migrateAnonymousToAuth(anonymousUserId, email, password) {
       .single();
 
     if (updateError) throw updateError;
-
-    // 4. Credits ve generation history korunuyor (değişmedi)
     
     return {
       success: true,
@@ -260,11 +246,122 @@ async function migrateAnonymousToAuth(anonymousUserId, email, password) {
 }
 
 /**
+ * ✅ YENİ: Save account (soft prompt email capture)
+ * Anonymous user → Auth user (NO bonus credits, just account security)
+ */
+async function saveAccount(anonymousUserId, email) {
+  try {
+    console.log('💾 Save account started');
+    console.log('   User ID:', anonymousUserId);
+    console.log('   Email:', email);
+
+    // 1. Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      throw new Error('Invalid email format');
+    }
+
+    // 2. Anonymous user kontrol
+    const { data: anonymousUser, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', anonymousUserId)
+      .eq('is_anonymous', true)
+      .single();
+
+    if (userError || !anonymousUser) {
+      throw new Error('Anonymous user not found');
+    }
+
+    console.log('✅ Anonymous user found');
+    console.log('   Current credits:', anonymousUser.credits);
+
+    // 3. Email zaten kullanılıyor mu?
+    const { data: existingAuthUsers } = await supabase.auth.admin.listUsers();
+    const emailExists = existingAuthUsers?.users?.some(u => u.email === email);
+
+    if (emailExists) {
+      throw new Error('Email already registered. Please login instead.');
+    }
+
+    console.log('✅ Email available');
+
+    // 4. Random password oluştur
+    const randomPassword = crypto.randomBytes(16).toString('hex');
+    console.log('✅ Random password generated');
+
+    // 5. Supabase Auth user oluştur
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password: randomPassword,
+      options: {
+        data: {
+          auto_created: true,
+          from_soft_prompt: true
+        }
+      }
+    });
+
+    if (authError) throw authError;
+
+    console.log('✅ Auth user created:', authData.user.id);
+
+    // 6. Users tablosunda migrate et (NO bonus credits!)
+    const { data: updatedUser, error: updateError } = await supabaseAdmin
+      .from('users')
+      .update({
+        email: email,
+        is_anonymous: false,
+        auth_provider: 'email',
+        auth_user_id: authData.user.id,
+        last_login_at: new Date().toISOString()
+        // ✅ credits DEĞİŞMİYOR - bonus YOK!
+      })
+      .eq('id', anonymousUserId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    console.log('✅ User migrated to authenticated');
+    console.log('   Credits preserved:', updatedUser.credits);
+
+    // 7. Password reset email gönder
+    try {
+      await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.FRONTEND_URL || 'https://www.dressai.app'}/reset-password`
+      });
+      console.log('✅ Password reset email sent');
+    } catch (emailError) {
+      console.error('⚠️ Password reset email failed:', emailError.message);
+      // Continue anyway - user can request password reset later
+    }
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🎉 ACCOUNT SAVED SUCCESSFULLY');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    return {
+      success: true,
+      user: updatedUser,
+      session: authData.session,
+      message: 'Account saved successfully'
+    };
+
+  } catch (error) {
+    console.error('Save account error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
  * Google OAuth ile giriş (hazırlık)
  */
 async function loginWithGoogle() {
   try {
-    // PUBLIC client kullan
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -292,7 +389,6 @@ async function loginWithGoogle() {
  */
 async function sendPasswordReset(email) {
   try {
-    // PUBLIC client kullan
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${process.env.FRONTEND_URL}/reset-password`
     });
@@ -317,7 +413,6 @@ async function sendPasswordReset(email) {
  */
 async function updatePassword(newPassword) {
   try {
-    // PUBLIC client kullan
     const { error } = await supabase.auth.updateUser({
       password: newPassword
     });
@@ -343,5 +438,6 @@ module.exports = {
   migrateAnonymousToAuth,
   loginWithGoogle,
   sendPasswordReset,
-  updatePassword
+  updatePassword,
+  saveAccount // ✅ YENİ
 };
