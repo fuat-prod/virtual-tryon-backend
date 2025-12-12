@@ -1,15 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto'); // ✅ YENİ: Random password için
+const crypto = require('crypto');
 const { validateEvent, WebhookVerificationError } = require('@polar-sh/sdk/webhooks');
-const { supabase, supabaseAdmin } = require('../../config/supabase'); // ✅ YENİ: supabase ekle
+const { supabase, supabaseAdmin } = require('../../config/supabase');
 
 /**
  * POST /api/webhooks/polar
  * Polar webhook events handler
- * 
- * IMPORTANT: This route must use express.raw() middleware
- * for signature verification to work correctly
  */
 router.post('/polar', express.raw({ type: 'application/json' }), async (req, res) => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -18,7 +15,6 @@ router.post('/polar', express.raw({ type: 'application/json' }), async (req, res
   console.log('Timestamp:', new Date().toISOString());
 
   try {
-    // Webhook signature validation
     const event = validateEvent(
       req.body,
       req.headers,
@@ -29,7 +25,6 @@ router.post('/polar', express.raw({ type: 'application/json' }), async (req, res
     console.log('📦 Event type:', event.type);
     console.log('📦 Event ID:', event.id || 'N/A');
 
-    // Event handling
     switch (event.type) {
       case 'order.created':
         await handleOrderCreated(event.data);
@@ -59,26 +54,21 @@ router.post('/polar', express.raw({ type: 'application/json' }), async (req, res
         console.log('⚠️ Unhandled event type:', event.type);
     }
 
-    // Always return 202 (acknowledged)
     res.status(202).send('');
 
   } catch (error) {
     if (error instanceof WebhookVerificationError) {
       console.error('❌ Webhook signature verification failed');
-      console.error('   This could be a security issue!');
       return res.status(403).send('Invalid signature');
     }
     
     console.error('❌ Webhook handler error:', error);
-    
-    // Still return 200 to prevent retries for application errors
     res.status(200).send('');
   }
 });
 
 /**
  * Handle order.created event
- * This is where we add credits to user!
  */
 async function handleOrderCreated(order) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -87,7 +77,6 @@ async function handleOrderCreated(order) {
   console.log('Order ID:', order.id);
   console.log('Status:', order.status);
 
-  // Only process paid orders
   if (order.status !== 'paid') {
     console.log('⏳ Order not paid yet, status:', order.status);
     return;
@@ -95,7 +84,7 @@ async function handleOrderCreated(order) {
 
   console.log('✅ Order is PAID - processing...');
 
-  // ✅ IDEMPOTENCY CHECK: Bu order daha önce işlendi mi?
+  // ✅ IDEMPOTENCY CHECK
   console.log('🔍 Checking if order already processed...');
   
   try {
@@ -108,8 +97,6 @@ async function handleOrderCreated(order) {
     if (existingTransaction) {
       console.log('⚠️ ORDER ALREADY PROCESSED - SKIPPING!');
       console.log('   Existing transaction:', existingTransaction.id);
-      console.log('   Credits already added:', existingTransaction.credits_added);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       return;
     }
 
@@ -125,19 +112,14 @@ async function handleOrderCreated(order) {
     return;
   }
 
-  // Get metadata
   const metadata = order.metadata || {};
-  
-  // Get userId from metadata
   const userId = metadata.userId || metadata.user_id;
   
   if (!userId) {
     console.error('❌ No userId in order metadata');
-    console.error('   Metadata:', metadata);
     return;
   }
 
-  // Get credits from metadata
   const creditsToAdd = parseInt(metadata.planCredits || metadata.credits || 0);
   
   if (creditsToAdd === 0) {
@@ -145,7 +127,7 @@ async function handleOrderCreated(order) {
     return;
   }
 
-  // ✅ YENİ: Customer email (Polar'dan)
+  // ✅ Customer email (Polar'dan)
   const customerEmail = order.customer?.email || order.billing_email || null;
   console.log('📧 Customer email:', customerEmail || 'N/A');
 
@@ -156,7 +138,6 @@ async function handleOrderCreated(order) {
   console.log('Credits to add:', creditsToAdd);
 
   try {
-    // Get current user
     const { data: currentUser, error: fetchError } = await supabaseAdmin
       .from('users')
       .select('*')
@@ -176,68 +157,39 @@ async function handleOrderCreated(order) {
     console.log('Is Anonymous:', currentUser.is_anonymous);
     console.log('Has Email:', currentUser.email ? 'Yes' : 'No');
 
-    // ✅ YENİ: AUTO-MIGRATE ANONYMOUS USER
+    // ✅ YENİ: SADECE EMAIL KAYDET (Supabase auth OLUŞTURMA!)
     if (currentUser.is_anonymous && customerEmail && !currentUser.email) {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('🔄 AUTO-MIGRATING ANONYMOUS USER');
+      console.log('📧 SAVING EMAIL (PASSWORDLESS)');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('   Email:', customerEmail);
       
       try {
-        // 1. Random password oluştur
-        const randomPassword = crypto.randomBytes(16).toString('hex');
+        // ❌ Supabase Auth user OLUŞTURMA
+        // Sadece email kaydet, is_anonymous = false
         
-        // 2. Supabase Auth user oluştur
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: customerEmail,
-          password: randomPassword,
-          options: {
-            data: {
-              auto_created: true,
-              from_payment: true
-            }
-          }
-        });
+        await supabaseAdmin
+          .from('users')
+          .update({
+            email: customerEmail,
+            is_anonymous: false,
+            // ❌ auth_user_id YOK (henüz)
+            // ❌ auth_provider YOK (henüz)
+            last_login_at: new Date().toISOString()
+          })
+          .eq('id', userId);
 
-        if (authError) {
-          console.error('⚠️ Auth user creation failed:', authError.message);
-          // Continue with credits anyway
-        } else if (authData?.user) {
-          console.log('✅ Auth user created:', authData.user.id);
-          
-          // 3. Users tablosunda email ve auth bilgilerini güncelle
-          await supabaseAdmin
-            .from('users')
-            .update({
-              email: customerEmail,
-              is_anonymous: false,
-              auth_provider: 'email',
-              auth_user_id: authData.user.id,
-              last_login_at: new Date().toISOString()
-            })
-            .eq('id', userId);
-
-          console.log('✅ User migrated to authenticated');
-
-          // 4. Password reset email gönder
-          try {
-            await supabase.auth.resetPasswordForEmail(customerEmail, {
-              redirectTo: `${process.env.FRONTEND_URL || 'https://www.dressai.app'}/reset-password`
-            });
-            console.log('✅ Password reset email sent');
-          } catch (emailError) {
-            console.error('⚠️ Password reset email failed:', emailError.message);
-          }
-        }
-      } catch (migrateError) {
-        console.error('⚠️ Auto-migration failed:', migrateError.message);
-        console.log('   Continuing with credits addition...');
+        console.log('✅ Email saved (passwordless)');
+        console.log('   User can set password in soft prompt');
+        
+      } catch (emailError) {
+        console.error('⚠️ Email save failed:', emailError.message);
       }
       
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     }
 
-    // ✅ TRANSACTION OLUŞTUR (idempotency için)
+    // ✅ TRANSACTION OLUŞTUR
     const { data: newTransaction, error: txError } = await supabaseAdmin
       .from('transactions')
       .insert({
@@ -252,7 +204,7 @@ async function handleOrderCreated(order) {
           ...metadata,
           orderStatus: order.status,
           customerEmail: customerEmail || currentUser.email,
-          autoMigrated: currentUser.is_anonymous && customerEmail ? true : false,
+          passwordless: currentUser.is_anonymous && customerEmail ? true : false,
           processedAt: new Date().toISOString()
         }
       })
@@ -261,11 +213,11 @@ async function handleOrderCreated(order) {
 
     if (txError) {
       if (txError.code === '23505') {
-        console.log('⚠️ DUPLICATE ORDER DETECTED - SKIPPING CREDITS!');
+        console.log('⚠️ DUPLICATE ORDER - SKIPPING!');
         return;
       }
       
-      console.error('❌ Error creating transaction record:', txError);
+      console.error('❌ Error creating transaction:', txError);
       throw txError;
     }
 
@@ -283,7 +235,6 @@ async function handleOrderCreated(order) {
     if (updateError) {
       console.error('❌ Error updating credits:', updateError);
       
-      // Rollback: Transaction'ı sil
       await supabaseAdmin
         .from('transactions')
         .delete()
@@ -304,9 +255,6 @@ async function handleOrderCreated(order) {
   }
 }
 
-/**
- * Handle order.updated event
- */
 async function handleOrderUpdated(order) {
   console.log('🔄 ORDER UPDATED HANDLER');
   console.log('Order ID:', order.id);
@@ -320,40 +268,24 @@ async function handleOrderUpdated(order) {
   }
 }
 
-/**
- * Handle checkout.created event
- */
 async function handleCheckoutCreated(checkout) {
   console.log('🛒 CHECKOUT CREATED HANDLER');
   console.log('Checkout ID:', checkout.id);
-  console.log('Status:', checkout.status);
 }
 
-/**
- * Handle checkout.updated event
- */
 async function handleCheckoutUpdated(checkout) {
   console.log('🛒 CHECKOUT UPDATED HANDLER');
   console.log('Checkout ID:', checkout.id);
-  console.log('Status:', checkout.status);
 }
 
-/**
- * Handle subscription.created event
- */
 async function handleSubscriptionCreated(subscription) {
   console.log('📅 SUBSCRIPTION CREATED HANDLER');
   console.log('Subscription ID:', subscription.id);
-  console.log('Status:', subscription.status);
 }
 
-/**
- * Handle subscription.updated event
- */
 async function handleSubscriptionUpdated(subscription) {
   console.log('📅 SUBSCRIPTION UPDATED HANDLER');
   console.log('Subscription ID:', subscription.id);
-  console.log('Status:', subscription.status);
 }
 
 module.exports = router;
